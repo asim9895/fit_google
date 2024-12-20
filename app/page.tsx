@@ -1,101 +1,176 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useState } from "react";
+import { GoogleOAuthProvider, useGoogleLogin } from "@react-oauth/google";
+
+const GOOGLE_CLIENT_ID: any = process.env.GOOGLE_CLIENT_ID;
+const Home = () => {
+  const [steps, setSteps] = useState(0);
+  const [error, setError] = useState("");
+  const [weight, setweight] = useState([]);
+
+  // Helper function to get the start and end of the current day in milliseconds
+  function getTodayTimeRange() {
+    const now = new Date();
+    const startOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    ).getTime();
+    const endOfDay = startOfDay + 86400000; // Add 24 hours in milliseconds
+    return { startTimeMillis: startOfDay, endTimeMillis: endOfDay };
+  }
+
+  async function fetchTodaySteps(accessToken: any) {
+    const { startTimeMillis, endTimeMillis } = getTodayTimeRange();
+
+    const response = await fetch(
+      "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          aggregateBy: [
+            {
+              dataTypeName: "com.google.step_count.delta",
+            },
+          ],
+          bucketByTime: { durationMillis: 86400000 }, // 1 day in milliseconds
+          startTimeMillis, // Start of the current day
+          endTimeMillis, // End of the current day
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error("Error fetching step data:", error);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log("Today's step data:", data);
+
+    // Extract step count
+    let stepCount = 0;
+    if (data.bucket && data.bucket.length > 0) {
+      data.bucket.forEach((bucket: any) => {
+        if (bucket.dataset && bucket.dataset.length > 0) {
+          bucket.dataset.forEach((dataset: any) => {
+            if (dataset.point && dataset.point.length > 0) {
+              dataset.point.forEach((point: any) => {
+                if (point.value && point.value.length > 0) {
+                  stepCount += point.value[0].intVal || 0; // Add up step counts
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+
+    console.log(`Total steps today: ${stepCount}`);
+    return stepCount;
+  }
+
+  async function fetchWeightData(accessToken: any) {
+    const { startTimeMillis, endTimeMillis } = getTodayTimeRange();
+
+    const response = await fetch(
+      "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          aggregateBy: [
+            {
+              dataTypeName: "com.google.weight",
+            },
+          ],
+          bucketByTime: { durationMillis: 86400000 }, // 1 day in milliseconds
+          startTimeMillis, // Start of the current day
+          endTimeMillis, // End of the current day
+        }),
+      }
+    );
+
+    console.log(await response.json());
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error("Error fetching weight data:", error);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log("Weight data:", data);
+
+    // Extract weight information
+    const weightRecords: any = [];
+    if (data.bucket && data.bucket.length > 0) {
+      data.bucket.forEach((bucket: any) => {
+        if (bucket.dataset && bucket.dataset.length > 0) {
+          bucket.dataset.forEach((dataset: any) => {
+            if (dataset.point && dataset.point.length > 0) {
+              dataset.point.forEach((point: any) => {
+                const weight = point.value?.[0]?.fpVal || null; // Extract weight (floating point value)
+                const time = point.startTimeNanos
+                  ? new Date(Number(point.startTimeNanos) / 1e6).toISOString()
+                  : null;
+
+                if (weight) {
+                  weightRecords.push({ weight, time });
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+
+    console.log("Extracted weight records:", weightRecords);
+    return weightRecords;
+  }
+
+  const login = useGoogleLogin({
+    onSuccess: async (response: any) => {
+      console.log(response); // Contains access_token
+      const { access_token } = response;
+      // fetchStepData(access_token);
+      await fetchTodaySteps(access_token);
+      const weight = await fetchWeightData(access_token);
+      setweight(weight);
+    },
+    onError: (error) => console.error("Login Failed:", error),
+    scope: "https://www.googleapis.com/auth/fitness.activity.read",
+  });
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <div>
+        <h1>Google Fit Steps</h1>
+        <button onClick={() => login()}>Login with Google</button>;
+        {steps !== null && <h2>Steps Today: {steps}</h2>}
+        {error && <p style={{ color: "red" }}>{error}</p>}
+        {JSON.stringify(weight)}
+      </div>
+    </GoogleOAuthProvider>
+  );
+};
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+// Wrap the app with GoogleOAuthProvider, providing your Google Client ID
+export default function MainApp() {
+  return (
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <Home />
+    </GoogleOAuthProvider>
   );
 }
